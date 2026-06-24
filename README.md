@@ -21,6 +21,7 @@ own decode thread, so one flaky camera never takes down the rest.
 - **Snapshots** — save the current frame of every live tile to a folder.
 - **Encrypted credentials** — the password is stored encrypted at rest (see [Where settings live](#where-settings-are-stored)).
 - **Compact UI** — connection details live in a dialog; everything else is on a single toolbar. Fullscreen and a controls-hide toggle let you collapse to pure video.
+- **Dark mode** — toggle a dark theme from the View menu (`Ctrl+D`); the choice is remembered.
 
 ---
 
@@ -126,6 +127,7 @@ tile is saved as `snapshot_<timestamp>_ch<N>.png`.
 | `Ctrl+S` | Snapshot |
 | `F11`    | Fullscreen (hides menu + toolbar for pure video) |
 | `Ctrl+H` | Hide / show the toolbar |
+| `Ctrl+D` | Toggle dark mode |
 | `Ctrl+Q` | Quit |
 
 ---
@@ -223,4 +225,3 @@ created on a different machine/user (the encrypted token won't decrypt — re-en
 - Up to 16 tiles at once.
 - Digital zoom only (it magnifies the decoded frame); there's no PTZ/optical control.
 - The saved-password encryption is machine-bound (see the security note above).
-
