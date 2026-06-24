@@ -1,11 +1,12 @@
 #!/usr/bin/python3 python3
+
 """
 HiLook / Hikvision Multi-Camera Grid Viewer
 -------------------------------------------
 View several channels of a HiLook/Hikvision NVR (or a single IP camera) at once.
 
 Install:
-    pip install PySide6 opencv-python numpy
+    pip install PySide6 opencv-python numpy cryptography
 
 RTSP URL format (Hikvision / HiLook):
     rtsp://<user>:<pass>@<ip>:<port>/Streaming/Channels/<channel><stream>
@@ -34,6 +35,9 @@ import os
 import sys
 import math
 import time
+import base64
+import getpass
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from urllib.parse import quote
@@ -51,6 +55,65 @@ from PySide6.QtWidgets import (
 
 MAX_TILES = 16  # 4x4 of sub streams is already a lot of simultaneous decode
 CELL_MIME = "application/x-hilook-cell"  # drag-and-drop payload: a tile's channel number
+
+
+# --------------------------------------------------------------------------- #
+# Password encryption at rest — local only, no OS keyring / D-Bus, so it can't
+# hang or block startup the way the secret-service approach did over VNC.
+#
+# The password is encrypted with Fernet (from the `cryptography` package) under a
+# key derived from this machine's id + your username. That keeps it out of the
+# config file as plaintext and makes the stored token non-portable to another
+# box/user. NOTE: because the key is machine-derived, this protects against casual
+# exposure (synced/backed-up dotfiles, screenshots, a glance at the file) — NOT
+# against someone who can already run code as you here, since they can re-derive
+# the key. For that, a master password prompted at launch is the only service-free
+# option (more secure, but friction every start).
+# --------------------------------------------------------------------------- #
+try:
+    from cryptography.fernet import Fernet
+    CRYPTO_AVAILABLE = True
+except ImportError:
+    CRYPTO_AVAILABLE = False
+
+_APP_SALT = "hilook-grid-viewer/v1"
+
+
+def _machine_id() -> str:
+    for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+        try:
+            with open(path) as fh:
+                return fh.read().strip()
+        except OSError:
+            continue
+    return ""  # fallback: key is then bound to username + salt only
+
+
+def _fernet() -> "Fernet":
+    material = f"{_machine_id()}|{getpass.getuser()}|{_APP_SALT}".encode()
+    key = base64.urlsafe_b64encode(hashlib.sha256(material).digest())  # 32-byte Fernet key
+    return Fernet(key)
+
+
+def encrypt_secret(plaintext: str) -> str:
+    """Return a Fernet token, or '' if there's nothing to store / no crypto lib."""
+    if not (CRYPTO_AVAILABLE and plaintext):
+        return ""
+    try:
+        return _fernet().encrypt(plaintext.encode()).decode()
+    except Exception:
+        return ""
+
+
+def decrypt_secret(token: str) -> str | None:
+    """Decrypt a Fernet token; None if empty, no crypto lib, or undecryptable
+    (e.g. token created on a different machine/user)."""
+    if not (CRYPTO_AVAILABLE and token):
+        return None
+    try:
+        return _fernet().decrypt(token.encode()).decode()
+    except Exception:
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -809,24 +872,51 @@ class MainWindow(QMainWindow):
             cv2.imwrite(os.path.join(folder, f"snapshot_{ts}_ch{ch}.png"), frame)
         self.statusBar().showMessage(f"Saved {len(grabbed)} snapshot(s) to {folder}")
 
-    # --- settings persistence (plaintext; ~/.config/HiLookViewer/GridViewer.conf) ---
+    # --- settings persistence (~/.config/HiLookViewer/GridViewer.conf; password encrypted) ---
     def load_settings(self) -> None:
         s = self.settings
         self.ip_edit.setText(s.value("ip", "192.168.1.64", type=str))
         self.port_spin.setValue(s.value("port", 554, type=int))
         self.user_edit.setText(s.value("user", "admin", type=str))
-        self.pass_edit.setText(s.value("password", "", type=str))
         self.channels_edit.setText(s.value("channels", "1-4", type=str))
         self.stream_combo.setCurrentIndex(s.value("stream_index", 1, type=int))  # default Sub
+
+        # Password: decrypt the stored token. Migrate any legacy plaintext from an
+        # older build once, then scrub it from the config file so nothing lingers.
+        pw = decrypt_secret(s.value("password_enc", "", type=str))
+        legacy = s.value("password", "", type=str)
+        if pw is None and legacy:
+            pw = legacy
+            enc = encrypt_secret(legacy)
+            if enc:
+                s.setValue("password_enc", enc)
+                s.remove("password")   # migrated -> remove the plaintext copy
+        elif legacy:
+            s.remove("password")        # already encrypted -> drop the stale plaintext
+        self.pass_edit.setText(pw or "")
+
+        if not CRYPTO_AVAILABLE:
+            self.statusBar().showMessage(
+                "Install 'cryptography' to store the password encrypted: pip install cryptography"
+            )
 
     def save_settings(self) -> None:
         s = self.settings
         s.setValue("ip", self.ip_edit.text().strip())
         s.setValue("port", self.port_spin.value())
         s.setValue("user", self.user_edit.text().strip())
-        s.setValue("password", self.pass_edit.text())
         s.setValue("channels", self.channels_edit.text().strip())
         s.setValue("stream_index", self.stream_combo.currentIndex())
+
+        # Store the password encrypted; never write it in plaintext.
+        s.remove("password")
+        enc = encrypt_secret(self.pass_edit.text())
+        if enc:
+            s.setValue("password_enc", enc)
+        else:
+            s.remove("password_enc")
+            if self.pass_edit.text() and not CRYPTO_AVAILABLE:
+                self.statusBar().showMessage("Install 'cryptography' to save the password encrypted")
 
     def toggle_fullscreen(self, *args) -> None:
         if self.isFullScreen():
