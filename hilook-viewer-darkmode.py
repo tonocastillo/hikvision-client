@@ -1,5 +1,4 @@
 #!/usr/bin/python3 python3
-
 """
 HiLook / Hikvision Multi-Camera Grid Viewer
 -------------------------------------------
@@ -642,12 +641,17 @@ class MainWindow(QMainWindow):
         tb.addWidget(self.snap_btn)
         tb.addSeparator()
         tb.addWidget(QLabel(" Playback "))
-        live_btn = QPushButton("● Live"); live_btn.clicked.connect(self._go_live)
-        tb.addWidget(live_btn)
+        self.live_btn = QPushButton("● Live"); self.live_btn.clicked.connect(self._go_live)
+        tb.addWidget(self.live_btn)
+        # Connect to a bound method (kept alive by the window) rather than a lambda —
+        # lambda connections can be garbage-collected when the app style is swapped.
+        self._preset_btns = []
         for secs in (30, 60, 180, 300, 600, 900):
             b = QPushButton("-" + self._fmt_offset(secs))
-            b.clicked.connect(lambda checked=False, s=secs: self._rewind(s))
+            b.setProperty("rewind_secs", secs)
+            b.clicked.connect(self._on_preset_clicked)
             tb.addWidget(b)
+            self._preset_btns.append(b)
         tb.addWidget(self.all_tiles_chk)
         tb.addSeparator()
         range_btn = QPushButton("Range…"); range_btn.clicked.connect(self._open_range)
@@ -852,6 +856,11 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _fmt_offset(seconds: int) -> str:
         return f"{seconds}s" if seconds < 60 else f"{seconds // 60}m"
+
+    def _on_preset_clicked(self) -> None:
+        secs = self.sender().property("rewind_secs")
+        if secs is not None:
+            self._rewind(int(secs))
 
     def _rewind(self, seconds: int) -> None:
         targets = self._playback_targets()
