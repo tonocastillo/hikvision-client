@@ -1,4 +1,4 @@
-#!/usr/bin/python3 python3
+#!/usr/bin/env python3
 """
 HiLook / Hikvision Multi-Camera Grid Viewer
 -------------------------------------------
@@ -79,7 +79,17 @@ _APP_SALT = "hilook-grid-viewer/v1"
 
 
 def _machine_id() -> str:
-    for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography",
+                0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY,
+            ) as key:
+                return winreg.QueryValueEx(key, "MachineGuid")[0]
+        except OSError:
+            return ""
+    for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):  # Linux
         try:
             with open(path) as fh:
                 return fh.read().strip()
@@ -920,11 +930,19 @@ class MainWindow(QMainWindow):
         if not folder:
             return
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        saved = 0
         for ch, frame in grabbed:
-            cv2.imwrite(os.path.join(folder, f"snapshot_{ts}_ch{ch}.png"), frame)
-        self.statusBar().showMessage(f"Saved {len(grabbed)} snapshot(s) to {folder}")
+            ok, buf = cv2.imencode(".png", frame)
+            if not ok:
+                continue
+            # Write via Python rather than cv2.imwrite so non-ASCII paths work on Windows.
+            with open(os.path.join(folder, f"snapshot_{ts}_ch{ch}.png"), "wb") as fh:
+                fh.write(buf.tobytes())
+            saved += 1
+        self.statusBar().showMessage(f"Saved {saved} snapshot(s) to {folder}")
 
-    # --- settings persistence (~/.config/HiLookViewer/GridViewer.conf; password encrypted) ---
+    # --- settings persistence (QSettings: ~/.config/...conf on Linux, registry on
+    #     Windows, plist on macOS; the password is stored encrypted) ---
     def load_settings(self) -> None:
         s = self.settings
         self.ip_edit.setText(s.value("ip", "192.168.1.64", type=str))
@@ -997,3 +1015,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
