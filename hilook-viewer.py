@@ -1,5 +1,4 @@
-#!/usr/bin/python3 python3
-
+#!/usr/bin/env python3
 """
 HiLook / Hikvision Multi-Camera Grid Viewer
 -------------------------------------------
@@ -45,7 +44,7 @@ from urllib.parse import quote
 import cv2
 import numpy as np
 from PySide6.QtCore import Qt, QThread, Signal, QMutex, QMutexLocker, QSettings, QMimeData, QDateTime
-from PySide6.QtGui import QImage, QPixmap, QAction, QDrag
+from PySide6.QtGui import QImage, QPixmap, QAction, QDrag, QPalette, QColor
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QComboBox,
     QPushButton, QGridLayout, QVBoxLayout, QHBoxLayout, QFileDialog,
@@ -80,7 +79,17 @@ _APP_SALT = "hilook-grid-viewer/v1"
 
 
 def _machine_id() -> str:
-    for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography",
+                0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY,
+            ) as key:
+                return winreg.QueryValueEx(key, "MachineGuid")[0]
+        except OSError:
+            return ""
+    for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):  # Linux
         try:
             with open(path) as fh:
                 return fh.read().strip()
@@ -563,6 +572,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("HiLook Grid Viewer")
         self.resize(1200, 800)
         self.settings = QSettings("HiLookViewer", "GridViewer")
+        app = QApplication.instance()
+        self._default_style = app.style().objectName()      # to restore on dark-mode off
+        self._default_palette = QPalette(app.palette())
         self.cells: list[CameraCell] = []
         self._featured: CameraCell | None = None
         self._selected: CameraCell | None = None
@@ -619,7 +631,12 @@ class MainWindow(QMainWindow):
         self.act_fs.setShortcut("F11"); self.act_fs.triggered.connect(self.toggle_fullscreen)
         self.act_hide = view.addAction("Hide controls"); self.act_hide.setCheckable(True)
         self.act_hide.setShortcut("Ctrl+H"); self.act_hide.toggled.connect(self._toggle_controls)
+        self.act_dark = view.addAction("Dark mode"); self.act_dark.setCheckable(True)
+        self.act_dark.setShortcut("Ctrl+D"); self.act_dark.toggled.connect(self._set_dark)
         self.addAction(self.act_fs)  # keep F11 working while the menu bar is hidden
+
+        # Apply the saved theme — setting the checkbox applies it via _set_dark.
+        self.act_dark.setChecked(self.settings.value("dark_mode", False, type=bool))
 
     def _build_toolbar(self) -> None:
         tb = QToolBar("Controls"); tb.setMovable(False)
@@ -634,12 +651,17 @@ class MainWindow(QMainWindow):
         tb.addWidget(self.snap_btn)
         tb.addSeparator()
         tb.addWidget(QLabel(" Playback "))
-        live_btn = QPushButton("● Live"); live_btn.clicked.connect(self._go_live)
-        tb.addWidget(live_btn)
+        self.live_btn = QPushButton("● Live"); self.live_btn.clicked.connect(self._go_live)
+        tb.addWidget(self.live_btn)
+        # Connect to a bound method (kept alive by the window) rather than a lambda —
+        # lambda connections can be garbage-collected when the app style is swapped.
+        self._preset_btns = []
         for secs in (30, 60, 180, 300, 600, 900):
             b = QPushButton("-" + self._fmt_offset(secs))
-            b.clicked.connect(lambda checked=False, s=secs: self._rewind(s))
+            b.setProperty("rewind_secs", secs)
+            b.clicked.connect(self._on_preset_clicked)
             tb.addWidget(b)
+            self._preset_btns.append(b)
         tb.addWidget(self.all_tiles_chk)
         tb.addSeparator()
         range_btn = QPushButton("Range…"); range_btn.clicked.connect(self._open_range)
@@ -647,6 +669,41 @@ class MainWindow(QMainWindow):
 
     def _toggle_controls(self, hidden: bool) -> None:
         self.toolbar.setVisible(not hidden)
+
+    def _set_dark(self, on: bool) -> None:
+        app = QApplication.instance()
+        if on:
+            app.setStyle("Fusion")              # Fusion honors custom palettes reliably
+            app.setPalette(self._dark_palette())
+        else:
+            if self._default_style:
+                app.setStyle(self._default_style)
+            app.setPalette(self._default_palette)
+        self.settings.setValue("dark_mode", on)
+
+    @staticmethod
+    def _dark_palette() -> QPalette:
+        p = QPalette()
+        window, base, text = QColor(53, 53, 53), QColor(35, 35, 35), QColor(221, 221, 221)
+        p.setColor(QPalette.Window, window)
+        p.setColor(QPalette.WindowText, text)
+        p.setColor(QPalette.Base, base)
+        p.setColor(QPalette.AlternateBase, window)
+        p.setColor(QPalette.ToolTipBase, base)
+        p.setColor(QPalette.ToolTipText, text)
+        p.setColor(QPalette.Text, text)
+        p.setColor(QPalette.Button, window)
+        p.setColor(QPalette.ButtonText, text)
+        p.setColor(QPalette.BrightText, QColor(255, 80, 80))
+        p.setColor(QPalette.Link, QColor(42, 130, 218))
+        p.setColor(QPalette.Highlight, QColor(42, 130, 218))
+        p.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
+        disabled = QColor(120, 120, 120)
+        p.setColor(QPalette.Disabled, QPalette.WindowText, disabled)
+        p.setColor(QPalette.Disabled, QPalette.Text, disabled)
+        p.setColor(QPalette.Disabled, QPalette.ButtonText, disabled)
+        p.setColor(QPalette.Disabled, QPalette.HighlightedText, disabled)
+        return p
 
     def _open_connection(self) -> None:
         if self.conn_dialog.exec() == QDialog.Accepted:
@@ -810,6 +867,11 @@ class MainWindow(QMainWindow):
     def _fmt_offset(seconds: int) -> str:
         return f"{seconds}s" if seconds < 60 else f"{seconds // 60}m"
 
+    def _on_preset_clicked(self) -> None:
+        secs = self.sender().property("rewind_secs")
+        if secs is not None:
+            self._rewind(int(secs))
+
     def _rewind(self, seconds: int) -> None:
         targets = self._playback_targets()
         if not targets:
@@ -868,11 +930,19 @@ class MainWindow(QMainWindow):
         if not folder:
             return
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        saved = 0
         for ch, frame in grabbed:
-            cv2.imwrite(os.path.join(folder, f"snapshot_{ts}_ch{ch}.png"), frame)
-        self.statusBar().showMessage(f"Saved {len(grabbed)} snapshot(s) to {folder}")
+            ok, buf = cv2.imencode(".png", frame)
+            if not ok:
+                continue
+            # Write via Python rather than cv2.imwrite so non-ASCII paths work on Windows.
+            with open(os.path.join(folder, f"snapshot_{ts}_ch{ch}.png"), "wb") as fh:
+                fh.write(buf.tobytes())
+            saved += 1
+        self.statusBar().showMessage(f"Saved {saved} snapshot(s) to {folder}")
 
-    # --- settings persistence (~/.config/HiLookViewer/GridViewer.conf; password encrypted) ---
+    # --- settings persistence (QSettings: ~/.config/...conf on Linux, registry on
+    #     Windows, plist on macOS; the password is stored encrypted) ---
     def load_settings(self) -> None:
         s = self.settings
         self.ip_edit.setText(s.value("ip", "192.168.1.64", type=str))
@@ -945,3 +1015,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
