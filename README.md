@@ -62,21 +62,21 @@ reminder in the status bar) — install it to get encrypted credential storage.
 ## Running
 
 ```bash
-python3 hilook_grid_viewer.py
+python3 hilook-viewer.py
 ```
 
 (Rename the script to whatever you like; the filename doesn't matter.)
 
-**On Windows:** run it with `python hilook_grid_viewer.py` from a Command Prompt or
+**On Windows:** run it with `python hilook-viewer.py` from a Command Prompt or
 PowerShell. To launch without a console window popping up, rename the file to
-`hilook_grid_viewer.pyw` and double-click it (the `.pyw` extension runs under
+`hilook-viewer.pyw` and double-click it (the `.pyw` extension runs under
 `pythonw.exe`, which has no console).
 
 **Optional — standalone .exe (no Python install needed to run):**
 
 ```bash
 pip install pyinstaller
-pyinstaller --noconsole --onefile hilook_grid_viewer.py
+pyinstaller --noconsole --onefile hilook-viewer.py
 ```
 
 The executable lands in `dist/`. (PyInstaller + Qt/OpenCV produces a large binary and
