@@ -67,6 +67,21 @@ python3 hilook_grid_viewer.py
 
 (Rename the script to whatever you like; the filename doesn't matter.)
 
+**On Windows:** run it with `python hilook_grid_viewer.py` from a Command Prompt or
+PowerShell. To launch without a console window popping up, rename the file to
+`hilook_grid_viewer.pyw` and double-click it (the `.pyw` extension runs under
+`pythonw.exe`, which has no console).
+
+**Optional — standalone .exe (no Python install needed to run):**
+
+```bash
+pip install pyinstaller
+pyinstaller --noconsole --onefile hilook_grid_viewer.py
+```
+
+The executable lands in `dist/`. (PyInstaller + Qt/OpenCV produces a large binary and
+occasionally needs tweaking, so it's optional — running from Python is the simplest path.)
+
 ---
 
 ## Usage
@@ -157,13 +172,13 @@ channel 3 main = `301`, etc.
 
 ## Where settings are stored
 
-Settings persist via Qt's `QSettings`. On Linux that's:
+Settings persist via Qt's `QSettings`, so the location is OS-dependent:
 
-```
-~/.config/HiLookViewer/GridViewer.conf
-```
+- **Linux:** `~/.config/HiLookViewer/GridViewer.conf`
+- **Windows:** the registry, under `HKEY_CURRENT_USER\Software\HiLookViewer\GridViewer`
+- **macOS:** `~/Library/Preferences/com.HiLookViewer.GridViewer.plist`
 
-The file holds the IP, port, user, channels, and stream choice in plain text, plus the
+It holds the IP, port, user, channels, and stream choice in plain text, plus the
 password as an **encrypted token** (`password_enc`) — never in the clear.
 
 The password is encrypted with [Fernet](https://cryptography.io/en/latest/fernet/) under
@@ -202,7 +217,7 @@ If that prints stream info (`Video: h264 …`), the path and credentials are fin
 **Playback fails or shows the wrong time**
 Playback uses the **DVR's local wall-clock time**, derived from your PC's clock.
 - Make sure the **DVR's own clock and date are correct** (enable NTP on the DVR).
-- Make sure your **PC's timezone matches the DVR's** so "5 minutes ago" lines up. If your PC runs in UTC but the DVR is on local time, the presets will ask for footage in the future. Fix with `sudo timedatectl set-timezone America/Costa_Rica` (or your zone), or use the **Custom range** with an explicit time read off the DVR's on-screen clock.
+- Make sure your **PC's timezone matches the DVR's** so "5 minutes ago" lines up. If your PC runs in UTC but the DVR is on local time, the presets will ask for footage in the future. On Linux: `sudo timedatectl set-timezone America/Costa_Rica` (or your zone); on Windows: Settings → Time & language → Date & time, or `tzutil /s "Central America Standard Time"`. Or just use the **Custom range** with an explicit time read off the DVR's on-screen clock.
 - Some firmware want UTC or a dashed timestamp instead of the compact local one — there's a commented alternative line in `CameraConfig.rtsp_url()` if needed.
 
 **High CPU usage / dropped frames**
@@ -225,3 +240,4 @@ created on a different machine/user (the encrypted token won't decrypt — re-en
 - Up to 16 tiles at once.
 - Digital zoom only (it magnifies the decoded frame); there's no PTZ/optical control.
 - The saved-password encryption is machine-bound (see the security note above).
+
